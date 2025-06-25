@@ -1,7 +1,7 @@
 use std::{collections::HashMap, path::PathBuf};
 
 use iced::{
-    widget::{button, column, scrollable, text, Column}, window::{self, icon, Position, Settings}, Element, Font, Size, Subscription, Task, Theme
+    border::Radius, widget::{button, column, container, scrollable, text, Column}, window::{self, icon, Position, Settings}, Border, Color, Element, Font, Size, Subscription, Task, Theme
 };
 use rfd::FileDialog;
 use walkdir::WalkDir;
@@ -112,10 +112,10 @@ impl App {
             self.images.len(),
             self.images
                 .iter()
-                .map(|(p, f)| format!("{p:?}: {f:?}"))
+                .map(|(p, f)| format!("{f:?}: {p:?}"))
                 .collect::<Vec<_>>()
                 .join("\n")
-        ));
+        )).wrapping(text::Wrapping::None);
 
         let interface = column![
             select_files_button,
@@ -128,7 +128,18 @@ impl App {
             .width(iced::Length::Fill);
 
         if self.images.len() > 0 {
-            interface.push(scrollable(show_iamge_info)).into()
+            interface.push(
+                container(
+                    scrollable(show_iamge_info)
+                        .width(iced::Length::Fill)
+                        .height(iced::Length::Fill)
+                )
+                .width(iced::Length::Fill)
+                .height(iced::Length::Fill)
+                .padding(10)
+                .style(container::bordered_box)
+                
+            ).into()    
         } else {
             interface.into()
         }
