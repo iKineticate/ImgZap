@@ -4,3 +4,21 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+iced = { git = "https://github.com/iced-rs/iced" }
+windows-icons = "0.3.0"
+image = "0.25.6"
+rfd = "0.15.3"
+walkdir = "2.5"
+rayon = "1.10.0"
+resvg = "0.45"
+tika-magic = "0.2.5"
+
+[build-dependencies]
+embed-resource = "3.0"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+opt-level = "s"
+panic = "abort"
+strip = "debuginfo"
