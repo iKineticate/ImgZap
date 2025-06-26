@@ -1,9 +1,14 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
 
 use iced::{
-    border::Radius, widget::{button, column, container, scrollable, text, Column}, window::{self, icon, Position, Settings}, Border, Color, Element, Font, Size, Subscription, Task, Theme
+    Element, Font, Size, Subscription, Task, Theme,
+    widget::{button, column, container, scrollable, text},
+    window::{self, Position, Settings, icon},
 };
-use rfd::FileDialog;
+use rfd::{AsyncFileDialog, FileHandle};
 use walkdir::WalkDir;
 
 fn main() -> iced::Result {
@@ -36,8 +41,10 @@ struct App {
 #[derive(Debug, Clone)]
 enum Message {
     Clear,
-    FileSelected,
-    FolderSelected,
+    OpenFileDialog,
+    OpenFolderDialog,
+    FileSelected(Option<Vec<FileHandle>>),
+    FolderSelected(Option<Vec<FileHandle>>),
     EventOccurred(iced::Event),
     Quit,
 }
@@ -48,55 +55,56 @@ impl App {
             Message::Clear => {
                 self.images.clear();
                 Task::none()
-            },
-            Message::FileSelected => {
-                let select_files_path = FileDialog::new()
-                    .set_title("选择文件")
-                    .pick_files();
-
-                if let Some(paths) = select_files_path {
-                    paths.into_iter().for_each(|p| {
-                        self.check_image(p);
-                    });
-                }
-
+            }
+            Message::FileSelected(files_handle) => {
+                if let Some(files_handle) = files_handle {
+                    files_handle.into_iter().for_each(|file_handle| {
+                        self.check_image(file_handle.path());
+                    })
+                };
                 Task::none()
-            },
-            Message::FolderSelected => {
-                let select_folders_path = FileDialog::new()
+            }
+            Message::FolderSelected(folders_handle) => {
+                if let Some(folders_handle) = folders_handle {
+                    folders_handle.into_iter().for_each(|folder_handle| {
+                        self.get_image_file_from_folder(folder_handle.path())
+                    });
+                };
+                Task::none()
+            }
+            Message::OpenFileDialog => Task::perform(
+                AsyncFileDialog::new().set_title("选择文件").pick_files(),
+                Message::FileSelected,
+            ),
+            Message::OpenFolderDialog => Task::perform(
+                AsyncFileDialog::new()
                     .set_title("选择文件夹")
-                    .pick_folders();
-
-                if let Some(paths) = select_folders_path {
-                    paths.into_iter().for_each(|path| {
-                        self.get_image_file_from_folder(path)
-                    });
-                }
-
-                Task::none()
-            },
+                    .pick_folders(),
+                Message::FolderSelected,
+            ),
             Message::EventOccurred(event) => {
+                // 文件拖拽处理
                 if let iced::Event::Window(iced::window::Event::FileDropped(path)) = event {
                     if path.is_dir() {
-                        self.get_image_file_from_folder(path)
+                        self.get_image_file_from_folder(&path)
                     } else if path.is_file() {
-                        self.check_image(path);
+                        self.check_image(&path);
                     }
                 }
 
                 Task::none()
-            },
+            }
             Message::Quit => window::get_latest().and_then(window::close),
         }
     }
 
     fn view(&self) -> Element<'_, Message> {
         let select_files_button = button("选择文件")
-            .on_press(Message::FileSelected)
+            .on_press(Message::OpenFileDialog)
             .width(iced::Length::Fill);
 
         let select_folders_button = button("选择文件夹")
-            .on_press(Message::FolderSelected)
+            .on_press(Message::OpenFolderDialog)
             .width(iced::Length::Fill);
 
         let clear_button = button("清空")
@@ -115,7 +123,8 @@ impl App {
                 .map(|(p, f)| format!("{f:?}: {p:?}"))
                 .collect::<Vec<_>>()
                 .join("\n")
-        )).wrapping(text::Wrapping::None);
+        ))
+        .wrapping(text::Wrapping::None);
 
         let interface = column![
             select_files_button,
@@ -123,23 +132,24 @@ impl App {
             clear_button,
             quit_button,
         ]
-            .spacing(20)
-            .padding(20)
-            .width(iced::Length::Fill);
+        .spacing(20)
+        .padding(20)
+        .width(iced::Length::Fill);
 
-        if self.images.len() > 0 {
-            interface.push(
-                container(
-                    scrollable(show_iamge_info)
-                        .width(iced::Length::Fill)
-                        .height(iced::Length::Fill)
+        if !self.images.is_empty() {
+            interface
+                .push(
+                    container(
+                        scrollable(show_iamge_info)
+                            .width(iced::Length::Fill)
+                            .height(iced::Length::Fill),
+                    )
+                    .width(iced::Length::Fill)
+                    .height(iced::Length::Fill)
+                    .padding(10)
+                    .style(container::bordered_box),
                 )
-                .width(iced::Length::Fill)
-                .height(iced::Length::Fill)
-                .padding(10)
-                .style(container::bordered_box)
-                
-            ).into()    
+                .into()
         } else {
             interface.into()
         }
@@ -153,22 +163,22 @@ impl App {
         Theme::Dark
     }
 
-    fn check_image(&mut self, file_path: PathBuf) {
-        if let Some(m) = tika_magic::from_filepath(&file_path) {
+    fn check_image(&mut self, file_path: &Path) {
+        if let Some(m) = tika_magic::from_filepath(file_path) {
             if m.starts_with("image") {
-                self.images.insert(file_path, m.to_string());
+                self.images.insert(file_path.into(), m.to_string());
             } else {
                 println!("\nNot an image file: {m}\n{file_path:?}\n");
             }
         }
     }
 
-    fn get_image_file_from_folder(&mut self, folder_path: PathBuf) {
+    fn get_image_file_from_folder(&mut self, folder_path: &Path) {
         WalkDir::new(folder_path)
             .into_iter()
             .filter_map(|e| e.ok().filter(|e| e.file_type().is_file()))
             .for_each(|entry| {
-                self.check_image(entry.into_path());
+                self.check_image(entry.path());
             });
     }
 }
