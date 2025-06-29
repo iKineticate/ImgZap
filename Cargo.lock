@@ -6,6 +6,7 @@ version = 4
 name = "ImgZap"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "embed-resource",
  "iced",
  "image 0.25.6",

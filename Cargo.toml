@@ -13,6 +13,7 @@ resvg = "0.45" # SVG图片处理
 tika-magic = "0.2.5" # 文件类型检测
 vtracer = "0.6.3" # 转换为SVG
 oxipng = { version = "9", features = ["parallel", "zopfli", "filetime"], default-features = false } # 压缩PNG图片
+anyhow = "1"
 
 [build-dependencies]
 embed-resource = "3.0"
