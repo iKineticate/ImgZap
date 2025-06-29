@@ -1,3 +1,6 @@
+mod compress;
+mod convert;
+
 use std::{
     collections::HashMap,
     ffi::OsStr,
@@ -7,7 +10,7 @@ use std::{
 use iced::{
     Element, Font, Size, Subscription, Task, Theme,
     widget::{Column, button, checkbox, column, container, row, scrollable},
-    window::{Position, Settings, icon},
+    window::{Settings, icon},
 };
 use rfd::{AsyncFileDialog, FileHandle};
 use walkdir::WalkDir;
@@ -19,15 +22,15 @@ fn main() -> iced::Result {
 
     iced::application(App::default, App::update, App::view)
         .subscription(App::subscription)
-        .theme(App::theme)
+        .theme(|_| Theme::Dark)
         .title("ImgZap")
         .window(Settings {
             icon: Some(
-                icon::from_rgba(logo_icon.to_vec(), logo_icon.width(), logo_icon.height()).unwrap(),
+                icon::from_rgba(logo_icon.to_vec(), logo_icon.width(), logo_icon.height()).expect("Failed to get rgba from logo"),
             ),
+            position: iced::window::Position::Centered,
             size: Size::new(720.0, 400.0),
             min_size: Some(Size::new(500.0, 310.0)),
-            position: Position::Centered,
             ..Default::default()
         })
         .default_font(Font::with_name("Microsoft YaHei UI"))
@@ -36,7 +39,6 @@ fn main() -> iced::Result {
 
 struct App {
     images: HashMap<PathBuf, (String, bool)>,
-    theme: Theme,
     convert_img_format: HashMap<ImageFormatExt, bool>,
     select_all_images: bool,
 }
@@ -45,7 +47,6 @@ impl Default for App {
     fn default() -> Self {
         App {
             images: HashMap::new(),
-            theme: Theme::default(),
             convert_img_format: ImageFormatExt::get_all(),
             select_all_images: false,
         }
@@ -61,8 +62,8 @@ enum Message {
     OpenFolderDialog,
     FileSelected(Option<Vec<FileHandle>>),
     FolderSelected(Option<Vec<FileHandle>>),
-    EventOccurred(iced::Event),
     SelectAllImage(bool),
+    DropFile(PathBuf),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -122,10 +123,12 @@ impl App {
     fn update(&mut self, event: Message) -> Task<Message> {
         match event {
             Message::SelectAllImage(should_select) => {
-                self.select_all_images = should_select;
-                self.images
-                    .iter_mut()
-                    .for_each(|(_, (_, c))| *c = should_select);
+                if self.select_all_images.ne(&should_select) {
+                    self.select_all_images = should_select;
+                    self.images
+                        .iter_mut()
+                        .for_each(|(_, (_, c))| *c = should_select);
+                }
 
                 Task::none()
             }
@@ -174,14 +177,11 @@ impl App {
                     .pick_folders(),
                 Message::FolderSelected,
             ),
-            Message::EventOccurred(event) => {
-                // 文件拖拽处理
-                if let iced::Event::Window(iced::window::Event::FileDropped(path)) = event {
-                    if path.is_dir() {
-                        self.get_image_file_from_folder(&path)
-                    } else if path.is_file() {
-                        self.check_image(&path);
-                    }
+            Message::DropFile(path) => {
+                if path.is_dir() {
+                    self.get_image_file_from_folder(&path)
+                } else if path.is_file() {
+                    self.check_image(&path)
                 }
 
                 Task::none()
@@ -217,7 +217,7 @@ impl App {
                 container(
                     scrollable(
                         Column::with_children(self.images.iter().enumerate().map(
-                            |(index, (path, (_mime, is_checked)))| {
+                            |(index, (path, (_mime, is_checked)))| {    
                                 if index == 0 {
                                     checkbox("< 选 择 所 有 >", self.select_all_images)
                                         .style(checkbox::success)
@@ -279,11 +279,14 @@ impl App {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        iced::event::listen().map(Message::EventOccurred)
-    }
-
-    fn theme(&self) -> Theme {
-        self.theme.clone()
+        use iced::window::Event::FileDropped;
+        use iced::Event::Window;
+        iced::event::listen_with(|event, _, _| {
+            match event {
+                Window(FileDropped(path)) => Some(Message::DropFile(path)),
+                _ => None,
+            }
+        })
     }
 
     fn check_image(&mut self, file_path: &Path) {
