@@ -16,18 +16,12 @@ use rfd::{AsyncFileDialog, FileHandle};
 use walkdir::WalkDir;
 
 fn main() -> iced::Result {
-    let logo_icon = image::load_from_memory(include_bytes!("../assets/logo/logo.png"))
-        .expect("Failed to load icon image")
-        .to_rgba8();
-
     iced::application(App::default, App::update, App::view)
         .subscription(App::subscription)
         .theme(|_| Theme::Dark)
         .title("ImgZap")
         .window(Settings {
-            icon: Some(
-                icon::from_rgba(logo_icon.to_vec(), logo_icon.width(), logo_icon.height()).expect("Failed to get rgba from logo"),
-            ),
+            icon: load_icon(),
             position: iced::window::Position::Centered,
             size: Size::new(720.0, 400.0),
             min_size: Some(Size::new(500.0, 310.0)),
@@ -37,8 +31,17 @@ fn main() -> iced::Result {
         .run()
 }
 
+fn load_icon() -> Option<iced::window::Icon> {
+    if let Ok(image) = image::load_from_memory(include_bytes!("../assets/logo/logo.png")) {
+        let image = image.to_rgba8();
+        icon::from_rgba(image.to_vec(), image.width(), image.height()).ok()
+    } else {
+        None
+    }
+}
+
 struct App {
-    images: HashMap<PathBuf, (String, bool)>,
+    images: HashMap<PathBuf, (ImageFormatExt, bool)>,
     convert_img_format: HashMap<ImageFormatExt, bool>,
     select_all_images: bool,
 }
@@ -64,6 +67,7 @@ enum Message {
     FolderSelected(Option<Vec<FileHandle>>),
     SelectAllImage(bool),
     DropFile(PathBuf),
+    ConvertImage,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -92,6 +96,21 @@ impl ImageFormatExt {
         vec
     }
 
+    fn get_format_from_mime(mime: &str) -> Option<ImageFormatExt> {
+        match mime {
+            "image/png" => Some(ImageFormatExt::Png),
+            "image/jpeg" => Some(ImageFormatExt::Jpeg),
+            "image/bmp" => Some(ImageFormatExt::Bmp),
+            "image/svg+xml" => Some(ImageFormatExt::Svg),
+            "image/x-icon" => Some(ImageFormatExt::Ico),
+            "image/vnd.microsoft.icon" => Some(ImageFormatExt::Ico),
+            "image/tiff" => Some(ImageFormatExt::Tiff),
+            "image/webp" => Some(ImageFormatExt::WebP),
+            "image/avif" => Some(ImageFormatExt::Avif),
+            _ => None,
+        }
+    }
+
     fn get_name(&self) -> &str {
         match self {
             ImageFormatExt::Png => "PNG",
@@ -105,6 +124,10 @@ impl ImageFormatExt {
         }
     }
 
+    fn get_ext(&self) -> String {
+        Self::get_name(&self).to_lowercase()
+    }
+
     fn get_format(&self) -> Option<image::ImageFormat> {
         match self {
             ImageFormatExt::Png => Some(image::ImageFormat::Png),
@@ -112,8 +135,8 @@ impl ImageFormatExt {
             ImageFormatExt::WebP => Some(image::ImageFormat::WebP),
             ImageFormatExt::Tiff => Some(image::ImageFormat::Tiff),
             ImageFormatExt::Bmp => Some(image::ImageFormat::Bmp),
-            ImageFormatExt::Ico => None,
             ImageFormatExt::Avif => Some(image::ImageFormat::Avif),
+            ImageFormatExt::Ico => None,
             ImageFormatExt::Svg => None,
         }
     }
@@ -133,8 +156,8 @@ impl App {
                 Task::none()
             }
             Message::ToggleImageItem(key) => {
-                if let Some(is_check) = self.images.get_mut(&key) {
-                    is_check.1 = !is_check.1;
+                if let Some((_, is_check)) = self.images.get_mut(&key) {
+                    *is_check = !*is_check;
                 }
 
                 Task::none()
@@ -147,6 +170,7 @@ impl App {
             }
             Message::Clear => {
                 self.images.clear();
+                self.select_all_images = false;
                 Task::none()
             }
             Message::FileSelected(files_handle) => {
@@ -186,6 +210,11 @@ impl App {
 
                 Task::none()
             }
+            Message::ConvertImage => {
+                convert::image_to_other(&self.images, &self.convert_img_format);
+
+                Task::none()
+            }
         }
     }
 
@@ -202,9 +231,31 @@ impl App {
             .on_press(Message::Clear)
             .width(iced::Length::Fill);
 
-        let convert_button = button("转换").width(iced::Length::Fill);
+        let convert_button = button("转换")
+            .on_press(Message::ConvertImage)
+            .width(iced::Length::Fill);
 
-        let show_iamge_list = container(
+        let mut images_list = Column::new()
+            .push(
+                checkbox("< 选 择 所 有 >", self.select_all_images)
+                    .style(checkbox::success)
+                    .on_toggle(Message::SelectAllImage),
+            )
+            .spacing(10);
+
+        for (path, (_mime, is_checked)) in self.images.iter() {
+            images_list = images_list.push(
+                checkbox(
+                    path.file_name()
+                        .and_then(OsStr::to_str)
+                        .unwrap_or("<未知文件名>"),
+                    *is_checked,
+                )
+                .on_toggle(|_| Message::ToggleImageItem(path.into())),
+            );
+        }
+
+        let show_iamges_list = container(
             column![
                 row![
                     select_files_button,
@@ -213,32 +264,12 @@ impl App {
                     convert_button
                 ]
                 .width(iced::Length::Fill)
+                .height(30)
                 .spacing(10),
                 container(
-                    scrollable(
-                        Column::with_children(self.images.iter().enumerate().map(
-                            |(index, (path, (_mime, is_checked)))| {    
-                                if index == 0 {
-                                    checkbox("< 选 择 所 有 >", self.select_all_images)
-                                        .style(checkbox::success)
-                                        .on_toggle(Message::SelectAllImage)
-                                        .into()
-                                } else {
-                                    checkbox(
-                                        path.file_name()
-                                            .and_then(OsStr::to_str)
-                                            .unwrap_or("<未知文件名>"),
-                                        *is_checked,
-                                    )
-                                    .on_toggle(|_| Message::ToggleImageItem(path.into()))
-                                    .into()
-                                }
-                            }
-                        ))
-                        .spacing(10),
-                    )
-                    .width(iced::Length::Fill)
-                    .height(iced::Length::Fill)
+                    scrollable(images_list)
+                        .width(iced::Length::Fill)
+                        .height(iced::Length::Fill)
                 )
                 .width(iced::Length::Fill)
                 .height(iced::Length::Fill)
@@ -253,16 +284,18 @@ impl App {
         .style(container::rounded_box);
 
         let show_image_format = container(
-            Column::with_children(self.convert_img_format.iter().map(
-                |(image_formamt, should_convert)| {
-                    checkbox(image_formamt.get_name(), *should_convert)
-                        .on_toggle(|_| {
-                            Message::ToggleImageFormatItem(*image_formamt, *should_convert)
-                        })
-                        .into()
-                },
-            ))
-            .spacing(10)
+            scrollable(
+                Column::with_children(self.convert_img_format.iter().map(
+                    |(image_formamt, should_convert)| {
+                        checkbox(image_formamt.get_name(), *should_convert)
+                            .on_toggle(|_| {
+                                Message::ToggleImageFormatItem(*image_formamt, *should_convert)
+                            })
+                            .into()
+                    },
+                ))
+                .spacing(10),
+            )
             .width(iced::Length::Fill)
             .height(iced::Length::Fill),
         )
@@ -271,7 +304,7 @@ impl App {
         .padding(10)
         .style(container::bordered_box);
 
-        let interface = row![show_iamge_list, show_image_format,]
+        let interface = row![show_iamges_list, show_image_format,]
             .spacing(10)
             .padding(10);
 
@@ -279,20 +312,20 @@ impl App {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        use iced::window::Event::FileDropped;
         use iced::Event::Window;
-        iced::event::listen_with(|event, _, _| {
-            match event {
-                Window(FileDropped(path)) => Some(Message::DropFile(path)),
-                _ => None,
-            }
+        use iced::window::Event::FileDropped;
+        iced::event::listen_with(|event, _, _| match event {
+            Window(FileDropped(path)) => Some(Message::DropFile(path)),
+            _ => None,
         })
     }
 
     fn check_image(&mut self, file_path: &Path) {
-        if let Some(m) = tika_magic::from_filepath(file_path) {
-            if m.starts_with("image") {
-                self.images.insert(file_path.into(), (m.to_string(), false));
+        if let Some(mime) = tika_magic::from_filepath(file_path) {
+            if let Some(format) = ImageFormatExt::get_format_from_mime(mime) {
+                self.images.insert(file_path.into(), (format, false));
+            } else {
+                println!("Not an image or image does not support conversion: \n{file_path:?}\n")
             }
         }
     }

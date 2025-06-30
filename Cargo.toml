@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 iced = { git = "https://github.com/iced-rs/iced" }
 image = "0.25.6"
+ico = "0.4"
 rfd = "0.15.3" # 打开文件选择器
 walkdir = "2.5"
 rayon = "1.10.0" # 并行处理
