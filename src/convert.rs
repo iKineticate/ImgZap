@@ -7,7 +7,7 @@ use std::{
 };
 use anyhow::{Context, Result};
 use image::codecs::ico::{IcoEncoder, IcoFrame};
-use image::{DynamicImage, ImageFormat, RgbaImage};
+use image::{DynamicImage, RgbaImage};
 use rayon::prelude::*;
 use resvg::{tiny_skia, usvg};
 use vtracer::ColorImage;
@@ -153,10 +153,17 @@ fn svg_to_other(
     match convert_format {
         ImageFormatExt::Ico => {
             other_to_icon(image.into(), &output_path, vec![16, 32, 48, 64, 128, 256])?
+        },
+        ImageFormatExt::Jpeg => {
+            let image = DynamicImage::ImageRgba8(image).to_rgb8();
+            image.save_with_format(
+                output_path,
+                convert_format.get_format().expect("No supported image formats")
+            )?
         }
         _ => image.save_with_format(
             output_path,
-            convert_format.get_format().unwrap_or(ImageFormat::Png),
+            convert_format.get_format().expect("No supported image formats"),
         )?,
     }
     Ok(())
@@ -183,11 +190,10 @@ fn other_to_other(
 }
 
 fn other_to_svg(input_path: &Path, output_path: &Path, config: vtracer::Config) -> Result<()> {
-    if let Err(err) = vtracer::convert_image_to_svg(input_path, output_path, config) {
-        Err(anyhow::anyhow!("Failed to convert to svg: {err}\n{input_path:?}\n"))
-    } else {
-        Ok(())
-    }
+    vtracer::convert_image_to_svg(input_path, output_path, config)
+        .map_err(|e| anyhow::anyhow!("Failed to convert to svg: {e}\n{input_path:?}\n"))?;
+
+    Ok(())
 }
 
 fn other_to_icon(image: DynamicImage, output_path: &Path, sizes: Vec<u32>) -> Result<()> {
@@ -211,20 +217,4 @@ fn other_to_icon(image: DynamicImage, output_path: &Path, sizes: Vec<u32>) -> Re
         .with_context(|| "Failed to encode .ico file")?;
 
     Ok(())
-}
-
-#[cfg(test)]
-mod test {
-    use std::path::Path;
-
-    #[test]
-    fn test_test() {
-        if let Err(e) = crate::convert::other_to_svg(
-            Path::new(r"C:\Users\11593\Downloads\flaticon153624.png"),
-            Path::new(r"C:\Users\11593\Downloads\tree22.svg"),
-            vtracer::Config::default(),
-        ) {
-            println!("{e}:?")
-        }
-    }
 }
