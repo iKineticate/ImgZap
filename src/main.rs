@@ -213,7 +213,11 @@ impl App {
                 Task::none()
             }
             Message::ConvertImage => {
-                convert::image_to_other(&self.images, &self.convert_img_format);
+                let images = self.images.clone();
+                let convert_img_format = self.convert_img_format.clone();
+                std::thread::spawn(move || {
+                    convert::image_to_other(&images, &convert_img_format);
+                });
 
                 Task::none()
             }

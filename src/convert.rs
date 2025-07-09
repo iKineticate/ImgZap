@@ -1,15 +1,15 @@
 use crate::ImageFormatExt;
 
-use std::{
-    collections::HashMap,
-    path::{Path, PathBuf},
-    io::Write,
-};
 use anyhow::{Context, Result};
 use image::codecs::ico::{IcoEncoder, IcoFrame};
-use image::{DynamicImage, RgbaImage};
+use image::{DynamicImage, ImageFormat, RgbaImage};
 use rayon::prelude::*;
 use resvg::{tiny_skia, usvg};
+use std::{
+    collections::HashMap,
+    io::Write,
+    path::{Path, PathBuf},
+};
 use vtracer::ColorImage;
 
 pub fn image_to_other(
@@ -17,11 +17,11 @@ pub fn image_to_other(
     convert_img_format: &HashMap<ImageFormatExt, bool>,
 ) {
     images
-        .iter()
+        .into_iter()
         .filter_map(|(p, (f, is_check))| is_check.then_some((p, f)))
         .for_each(|(input_path, iamge_format)| {
             convert_img_format
-                .iter()
+                .into_iter()
                 .filter_map(|(convert_format, is_convert)| {
                     (*is_convert && iamge_format.ne(convert_format)).then_some(convert_format)
                 })
@@ -29,29 +29,23 @@ pub fn image_to_other(
                     ImageFormatExt::Svg => {
                         let output_path = input_path.with_extension(convert_format.get_ext());
                         if svg_to_other(input_path, &output_path, 256, convert_format)
-                            .inspect_err(|e| println!("{e:?}"))
+                            .inspect_err(|e| println!("Failed to svg convert to {convert_format:?}\n{input_path:?}\n{e:?}"))
                             .is_ok()
-                        {
-                            
-                        };
+                        {};
                     }
                     ImageFormatExt::Ico => {
                         let output_path = input_path.with_extension(convert_format.get_ext());
                         if ico_to_other(input_path, &output_path, convert_format)
-                            .inspect_err(|e| println!("{e:?}"))
+                            .inspect_err(|e| println!("Failed to icon convert to {convert_format:?}\n{input_path:?}\n{e:?}"))
                             .is_ok()
-                        {
-
-                        };
+                        {};
                     }
                     _ => {
                         let output_path = input_path.with_extension(convert_format.get_ext());
                         if other_to_other(input_path, &output_path, convert_format)
-                            .inspect_err(|e| println!("{e:?}"))
+                            .inspect_err(|e| println!("Failed to convert to {convert_format:?}\n{input_path:?}\n{e:?}"))
                             .is_ok()
-                        {
-
-                        };
+                        {};
                     }
                 });
         });
@@ -66,40 +60,64 @@ fn ico_to_other(
     let icon_dir = ico::IconDir::read(file)?;
     let largest_entry = icon_dir
         .entries()
-        .iter()
+        .into_iter()
         .max_by_key(|entry| entry.width() * entry.height())
-        .ok_or(anyhow::anyhow!("No images found in ICO file: {input_path:?}"))?;
+        .ok_or(anyhow::anyhow!(
+            "No images found in ICO file: {input_path:?}"
+        ))?;
 
     let ico_image = largest_entry.decode()?;
 
-
     match convert_format.get_format() {
         Some(f) => {
-            let rgba_image = RgbaImage::from_raw(
-                ico_image.width() as u32,
-                ico_image.height() as u32,  
-                ico_image.rgba_data().to_vec(),
-            )
-            .ok_or(anyhow::anyhow!("Failed to create RGBA image: {input_path:?}"))?;
-
             let output_file = std::fs::File::create(output_path)?;
             let mut writer = std::io::BufWriter::new(output_file);
-            rgba_image.write_to(&mut writer, f)?
-        },
+
+            if f == ImageFormat::Jpeg {
+                let rgba_image = RgbaImage::from_raw(
+                    ico_image.width() as u32,
+                    ico_image.height() as u32,
+                    ico_image.rgba_data().to_vec(),
+                )
+                .ok_or(anyhow::anyhow!(
+                    "Failed to create RGBA image: {input_path:?}"
+                ))?;
+
+                let rgb_image = DynamicImage::ImageRgba8(rgba_image).to_rgb8();
+                rgb_image.save_with_format(
+                    output_path,
+                    convert_format
+                        .get_format()
+                        .expect("No supported image formats"),
+                )?;
+            } else {
+                let rgba_image = RgbaImage::from_raw(
+                    ico_image.width() as u32,
+                    ico_image.height() as u32,
+                    ico_image.rgba_data().to_vec(),
+                )
+                .ok_or(anyhow::anyhow!(
+                    "Failed to create RGBA image: {input_path:?}"
+                ))?;
+
+                rgba_image.write_to(&mut writer, f)?
+            }
+        }
         None => {
             let svg_file = vtracer::convert(
                 ColorImage {
                     pixels: ico_image.rgba_data().to_vec(),
                     width: ico_image.width() as usize,
                     height: ico_image.height() as usize,
-                },  
-                vtracer::Config::default()  
-            ).map_err(|e| anyhow::anyhow!("{e}"))?;
+                },
+                vtracer::Config::default(),
+            )
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
 
             let mut output_file = std::fs::File::create(output_path)?;
             write!(&mut output_file, "{}", svg_file).with_context(|| "Failed to write file.")?;
         }
-    }       
+    }
 
     Ok(())
 }
@@ -153,17 +171,21 @@ fn svg_to_other(
     match convert_format {
         ImageFormatExt::Ico => {
             other_to_icon(image.into(), &output_path, vec![16, 32, 48, 64, 128, 256])?
-        },
+        }
         ImageFormatExt::Jpeg => {
             let image = DynamicImage::ImageRgba8(image).to_rgb8();
             image.save_with_format(
                 output_path,
-                convert_format.get_format().expect("No supported image formats")
+                convert_format
+                    .get_format()
+                    .expect("No supported image formats"),
             )?
         }
         _ => image.save_with_format(
             output_path,
-            convert_format.get_format().expect("No supported image formats"),
+            convert_format
+                .get_format()
+                .expect("No supported image formats"),
         )?,
     }
     Ok(())
@@ -176,14 +198,21 @@ fn other_to_other(
 ) -> Result<()> {
     let image = image::open(input_path)?;
     match convert_format.get_format() {
-        Some(format) => image.save_with_format(output_path, format)?,
+        Some(format) => {
+            if format == ImageFormat::Jpeg {
+                let image = image.to_rgb8();
+                image.save_with_format(output_path, format)?
+            } else {
+                image.save_with_format(output_path, format)?
+            }
+        }
         None => {
             if *convert_format == ImageFormatExt::Ico {
                 other_to_icon(image, output_path, vec![16, 32, 48, 64, 128, 256])?;
             } else if *convert_format == ImageFormatExt::Svg {
                 other_to_svg(input_path, output_path, vtracer::Config::default())?
             }
-        },
+        }
     }
 
     Ok(())
